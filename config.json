@@ -1,6 +1,5 @@
 {
-    "JIRA_USERNAME": "",
-    "JIRA_API_TOKEN": "",
+  "useMonth": false,
 
     "timePerDay": { 
         "ONE-6652": 0, 
