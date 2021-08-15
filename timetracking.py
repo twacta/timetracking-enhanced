@@ -4,6 +4,7 @@ from requests.auth import HTTPBasicAuth
 import json
 import datetime
 import argparse
+from typing import Tuple
 
 # tasks details: https://onedior.atlassian.net/browse/ONE-6650
 with open("config.json") as config_file:
@@ -16,13 +17,14 @@ confluenceApiHost = (
     "https://onedior.atlassian.net/wiki/rest/calendar-services/1.0/calendar/"
 )
 timePerIssue = config["timePerDay"]
+timeOffPerIssue = config["timeOffPerIssue"]
 
 
 def get_cli_args():
     parser = argparse.ArgumentParser(description="fill in the CRA for the current week")
     parser.add_argument(
         "--force",
-        help="ignore already contributed day and off days check",
+        help="ignore already contributed day check",
         action="store_true",
     )
     parser.add_argument(
@@ -79,21 +81,35 @@ def set_store_days_contributed(new_days):
         json.dump(remove_duplicates(days_contributed), store_file)
 
 
-def day_with_week(day, days_contributed):
-    return (day, day.strftime("%Y-%m-%d"), str(day) in days_contributed)
+class Day:
+    def __init__(self, raw, representation, is_already_contributed, is_day_off):
+        self.raw = raw
+        self.representation = representation
+        self.is_already_contributed = is_already_contributed
+        self.is_day_off = is_day_off
+
+
+def day_with_week(day: datetime.datetime, days_contributed, off_days):
+    return Day(
+        day,
+        day.strftime("%Y-%m-%d"),
+        day.strftime("%Y-%m-%d") in days_contributed,
+        all(day >= off_day["start"] and day <= off_day["end"] for off_day in off_days),
+    )
 
 
 def getDays(useMonth=False):
     days_contributed = get_store_days_contributed()
     days = getDaysOfThisMonth() if useMonth else getDaysOfThisWeek()
-    return tuple(map(lambda day: day_with_week(day, days_contributed), days))
+    off_days = get_off_days_for_user(days)
+    return tuple(map(lambda day: day_with_week(day, days_contributed, off_days), days))
 
 
 def getDaysOfThisWeek():
     theday = datetime.datetime.today()
     weekday = theday.isoweekday()
     start = theday - datetime.timedelta(days=weekday - 1)
-    return [start + datetime.timedelta(days=d) for d in range(5)]
+    return (start + datetime.timedelta(days=d) for d in range(5))
 
 
 def getDaysOfThisMonth():
@@ -106,12 +122,14 @@ def getDaysOfThisMonth():
     )
     nbOfDay = (end - start).days
     dates = [start + datetime.timedelta(days=d) for d in range(nbOfDay)]
-    return filter(lambda x: x.isoweekday() < 6, dates)
+    return tuple(filter(lambda x: x.isoweekday() < 6, dates))
 
 
-def addWorklogForOneIssueOneDay(
-    issueNumber, startDate: datetime, timeSpent, dry_run=False
-):
+def addWorklogForOneIssueOneDay(issueNumber, startDate: str, timeSpent, dry_run=False):
+    if timeSpent == 0:
+        return
+
+    print(f"Day {startDate}: Adding {timeSpent} hours to issue {issueNumber}")
     if dry_run:
         print("Success ✅")
         return
@@ -145,18 +163,21 @@ def day_in_contributed_(days_contributed, week_of_day):
     return week_of_day in days_contributed
 
 
-def addWorkloadForAllDays(days_to_contribute, dry_run=False):
-    for x in days_to_contribute:
-        day = x[1]
-        for issue in timePerIssue:
-            if timePerIssue[issue] != 0:
-                print(f"Day {day}: Adding {timePerIssue[issue]} hours to issue {issue}")
-                addWorklogForOneIssueOneDay(issue, day, timePerIssue[issue], dry_run)
+def addWorkloadForAllDays(days_to_contribute: Tuple[Day, ...], dry_run=False):
+    for day in days_to_contribute:
+        timePerIssueForDay = timeOffPerIssue if day.is_day_off else timePerIssue
+        for issueNumber in timePerIssueForDay:
+            addWorklogForOneIssueOneDay(
+                issueNumber,
+                day.representation,
+                timePerIssueForDay[issueNumber],
+                dry_run,
+            )
 
     if not dry_run:
         set_store_days_contributed(
             map(
-                lambda x: x[1],
+                lambda day: day.representation,
                 days_to_contribute,
             )
         )
@@ -193,12 +214,13 @@ def get_user_id():
 
 def get_off_days_for_user(days_to_contribute):
     user_id = get_user_id()
-    off_days = get_off_days(tuple(map(lambda x: x[0], days_to_contribute)))
+    print("Getting off days")
+    off_days = get_off_days(days_to_contribute)
+    print("Success ✅")
     return tuple(filter(lambda x: x["id"] == user_id, off_days))
 
 
 def get_off_days(dates):
-    print("Getting off days")
     auth = HTTPBasicAuth(jiraUserName, jiraApiToken)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     # experimental / undocumented api https://community.atlassian.com/t5/Team-Calendars-for-Confluence/Confluence-REST-API-to-read-Calendar-events/qaq-p/1017982
@@ -223,15 +245,22 @@ def print_cron_tab_setup():
     )
 
 
-def filter_days_contributed_and_leaves(days_to_contribute):
-    off_days = get_off_days_for_user(days_to_contribute)
+def filter_days_contributed(days_to_contribute: Tuple[Day, ...]):
     return tuple(
         filter(
-            lambda x: x[2] == False
-            and all(
-                x[0] < off_day["start"] or x[0] > off_day["end"] for off_day in off_days
-            ),
+            lambda day: day.is_already_contributed == False,
             days_to_contribute,
+        )
+    )
+
+
+def format_days(days: Tuple[Day, ...]) -> str:
+    return " ".join(
+        map(
+            lambda day: f"(off){day.representation}"
+            if day.is_day_off
+            else day.representation,
+            days,
         )
     )
 
@@ -245,7 +274,7 @@ def main():
     days_ignoring_contributed = (
         days_to_contribute
         if args.force
-        else filter_days_contributed_and_leaves(days_to_contribute)
+        else filter_days_contributed(days_to_contribute)
     )
     if len(days_ignoring_contributed) == 0:
         print(
@@ -253,7 +282,7 @@ def main():
         )
         exit(0)
     print("💡 This will add predefined worklog on the following days:")
-    print(" ".join(map(lambda x: x[1], days_ignoring_contributed)))
+    print(format_days(days_ignoring_contributed))
 
     if not args.yes and not yes_or_no("Do you confirm ?"):
         print("Ok aborting 😈")
