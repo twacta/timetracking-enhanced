@@ -4,7 +4,7 @@ from requests.auth import HTTPBasicAuth
 import json
 import datetime
 import argparse
-from typing import Tuple
+from typing import Tuple, List, TypedDict
 
 # tasks details: https://onedior.atlassian.net/browse/ONE-6650
 with open("config.json") as config_file:
@@ -50,7 +50,7 @@ def get_cli_args():
     return parser.parse_args()
 
 
-def yes_or_no(question):
+def yes_or_no(question: str) -> bool:
     reply = str(input(f"{question} (y/n): ")).lower().strip()
     if reply[0] == "y":
         return True
@@ -60,7 +60,7 @@ def yes_or_no(question):
         return yes_or_no("Uhhhh... please enter ")
 
 
-def get_store_days_contributed():
+def get_store_days_contributed() -> List[str]:
     days_contributed = []
     try:
         with open("store.json", "r") as store_file:
@@ -70,15 +70,31 @@ def get_store_days_contributed():
     return days_contributed
 
 
-def remove_duplicates(list_of_values):
+def remove_duplicates(list_of_values: List[str]) -> List[str]:
     return list(dict.fromkeys(list_of_values))
 
 
-def set_store_days_contributed(new_days):
+def set_store_days_contributed(new_days: List[str]):
     days_contributed = get_store_days_contributed()
     with open("store.json", "w") as store_file:
         days_contributed.extend(new_days)
         json.dump(remove_duplicates(days_contributed), store_file)
+
+
+def get_user_id() -> str:
+    auth = HTTPBasicAuth(jiraUserName, jiraApiToken)
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    # doc: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-myself/#api-group-myself
+    response = requests.request(
+        "GET",
+        f"{jiraApiHost}myself",
+        headers=headers,
+        auth=auth,
+    )
+    if not response.ok:
+        raise RuntimeError(response.text)
+
+    return response.json()["accountId"]
 
 
 class Day:
@@ -89,7 +105,11 @@ class Day:
         self.is_day_off = is_day_off
 
 
-def day_with_week(day: datetime.datetime, days_contributed, off_days):
+def day_with_week(
+    day: datetime.datetime,
+    days_contributed: List[str],
+    off_days: Tuple[datetime.datetime, ...],
+) -> Day:
     return Day(
         day,
         day.strftime("%Y-%m-%d"),
@@ -98,21 +118,21 @@ def day_with_week(day: datetime.datetime, days_contributed, off_days):
     )
 
 
-def getDays(useMonth=False):
+def getDays(useMonth=False) -> Tuple[Day, ...]:
     days_contributed = get_store_days_contributed()
     days = getDaysOfThisMonth() if useMonth else getDaysOfThisWeek()
     off_days = get_off_days_for_user(days)
     return tuple(map(lambda day: day_with_week(day, days_contributed, off_days), days))
 
 
-def getDaysOfThisWeek():
+def getDaysOfThisWeek() -> Tuple[datetime.datetime, ...]:
     theday = datetime.datetime.today()
     weekday = theday.isoweekday()
     start = theday - datetime.timedelta(days=weekday - 1)
     return (start + datetime.timedelta(days=d) for d in range(5))
 
 
-def getDaysOfThisMonth():
+def getDaysOfThisMonth() -> Tuple[datetime.datetime, ...]:
     theday = datetime.datetime.today()
     start = datetime.datetime(theday.year, theday.month, 1)
     end = datetime.datetime(
@@ -125,7 +145,9 @@ def getDaysOfThisMonth():
     return tuple(filter(lambda x: x.isoweekday() < 6, dates))
 
 
-def addWorklogForOneIssueOneDay(issueNumber, startDate: str, timeSpent, dry_run=False):
+def addWorklogForOneIssueOneDay(
+    issueNumber: str, startDate: str, timeSpent: int, dry_run=False
+):
     if timeSpent == 0:
         return
 
@@ -159,10 +181,6 @@ def addWorklogForOneIssueOneDay(issueNumber, startDate: str, timeSpent, dry_run=
         raise RuntimeError(response.text)
 
 
-def day_in_contributed_(days_contributed, week_of_day):
-    return week_of_day in days_contributed
-
-
 def addWorkloadForAllDays(days_to_contribute: Tuple[Day, ...], dry_run=False):
     for day in days_to_contribute:
         timePerIssueForDay = timeOffPerIssue if day.is_day_off else timePerIssue
@@ -183,44 +201,48 @@ def addWorkloadForAllDays(days_to_contribute: Tuple[Day, ...], dry_run=False):
         )
 
 
-def map_calendar_value(value):
+class MappedCalendarEvent(TypedDict):
+    end: datetime.datetime
+    start: datetime.datetime
+    id: str
+    title: str
+
+
+class CalendarInvitees(TypedDict):
+    displayName: str
+    id: str
+    avatarIconUrl: str
+
+
+class CalendarEvent(TypedDict):
+    end: str
+    start: str
+    invitees: List[CalendarInvitees]
+    title: str
+    # rest of properties not used hence not typed here
+
+
+def map_calendar_event(event: CalendarEvent) -> MappedCalendarEvent:
     return {
-        "end": datetime.datetime.strptime(value["end"][:10], "%Y-%m-%d"),
-        "start": datetime.datetime.strptime(value["start"][:10], "%Y-%m-%d"),
-        "id": value["invitees"][0]["id"].replace("ari:cloud:identity::user/", ""),
-        "title": value["title"],
+        "end": datetime.datetime.strptime(event["end"][:10], "%Y-%m-%d"),
+        "start": datetime.datetime.strptime(event["start"][:10], "%Y-%m-%d"),
+        "id": event["invitees"][0]["id"].replace("ari:cloud:identity::user/", ""),
+        "title": event["title"],
     }
 
 
-def format_date_for_calendar_api(date_to_format):
+def format_date_for_calendar_api(date_to_format: datetime.datetime) -> str:
     return (date_to_format).strftime("%Y-%m-%d") + "T00%3A00%3A00Z"
 
 
-def get_user_id():
-    auth = HTTPBasicAuth(jiraUserName, jiraApiToken)
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    # doc: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-myself/#api-group-myself
-    response = requests.request(
-        "GET",
-        f"{jiraApiHost}myself",
-        headers=headers,
-        auth=auth,
-    )
-    if not response.ok:
-        raise RuntimeError(response.text)
-
-    return response.json()["accountId"]
-
-
-def get_off_days_for_user(days_to_contribute):
+def get_off_days_for_user(dates: Tuple[datetime.datetime, ...]):
     user_id = get_user_id()
-    print("Getting off days")
-    off_days = get_off_days(days_to_contribute)
-    print("Success ✅")
+    off_days = get_off_days(dates)
     return tuple(filter(lambda x: x["id"] == user_id, off_days))
 
 
-def get_off_days(dates):
+def get_off_days(dates: Tuple[datetime.datetime, ...]) -> Tuple[datetime.datetime, ...]:
+    print("Getting off days")
     auth = HTTPBasicAuth(jiraUserName, jiraApiToken)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     # experimental / undocumented api https://community.atlassian.com/t5/Team-Calendars-for-Confluence/Confluence-REST-API-to-read-Calendar-events/qaq-p/1017982
@@ -235,7 +257,8 @@ def get_off_days(dates):
     if not response.ok:
         raise RuntimeError(response.text)
 
-    return tuple(map(lambda x: map_calendar_value(x), response.json()["events"]))
+    print("Success ✅")
+    return tuple(map(lambda x: map_calendar_event(x), response.json()["events"]))
 
 
 def print_cron_tab_setup():
