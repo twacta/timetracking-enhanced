@@ -1,12 +1,15 @@
 {
-    "JIRA_USERNAME": "",
-    "JIRA_API_TOKEN": "",
+  "JIRA_USERNAME": "JIRA_USERNAME",
+  "JIRA_API_TOKEN": "JIRA_API_TOKEN",
 
-    "timePerDay": { 
-        "ONE-6652": 0, 
-        "ONE-6653": 0, 
-        "ONE-6654": 0, 
-        "ONE-6657": 0, 
-        "ONE-6658": 0
-    }
+  "timePerDay": {
+    "ONE-6652": 0,
+    "ONE-6653": 0,
+    "ONE-6654": 0,
+    "ONE-6657": 0,
+    "ONE-6658": 0
+  },
+  "timeOffPerIssue": {
+    "ONE-6651": 8
+  }
 }
