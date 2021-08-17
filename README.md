@@ -16,6 +16,6 @@ pour l'utiliser en cronjob `./timetracking.py --setup` et suivre les instruction
 
 pour afficher l'ensemble des commandes disponible : `./timetracking.py --help`
 
-le script ignore les vacances contribués sur le calendar confluence :heavy_check_mark:
+le script utilise `timeOffPerIssue` pour les vacances contribués sur le calendar confluence :heavy_check_mark: (default 8h en off)
 
 Enjoy :rocket:
