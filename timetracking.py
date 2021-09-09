@@ -132,7 +132,7 @@ def getDaysOfThisWeek() -> Tuple[datetime.datetime, ...]:
     theday = datetime.datetime.today()
     weekday = theday.isoweekday()
     start = theday - datetime.timedelta(days=weekday - 1)
-    return (start + datetime.timedelta(days=d) for d in range(5))
+    return tuple((start + datetime.timedelta(days=d) for d in range(5)))
 
 
 def getDaysOfThisMonth() -> Tuple[datetime.datetime, ...]:
