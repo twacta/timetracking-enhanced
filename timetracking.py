@@ -114,7 +114,10 @@ def day_with_week(
         day,
         day.strftime("%Y-%m-%d"),
         day.strftime("%Y-%m-%d") in days_contributed,
-        all(day >= off_day["start"] and day <= off_day["end"] for off_day in off_days),
+        len(off_days) > 0
+        and all(
+            day >= off_day["start"] and day <= off_day["end"] for off_day in off_days
+        ),
     )
 
 
